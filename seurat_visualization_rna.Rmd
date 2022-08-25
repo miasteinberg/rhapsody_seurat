@@ -1,0 +1,77 @@
+---
+title: "Using Seurat with BD Rhapsody multi-omic single-cell data"
+output:
+  html_document:
+    df_print: paged
+    #code_fold: hide
+---
+```{css style settings, echo = FALSE}
+blockquote {
+    padding: 10px 20px;
+    margin: 0 0 20px;
+    font-size: 14px;
+    border-left: 5px solid #eee;
+}
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+```{r load-packages, warning=FALSE, results='hide'}
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+```
+
+
+## Load Rhapsody data in R
+
+Load the seurat object created in the seurat_cluster_rna.Rmd script. The data have been QC'ed, normalized, scaled, and clustered.
+
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=60), cache=TRUE}
+combined.data <- readRDS('projectname_rna_cluster.rds')
+```
+
+This follows the [Seurat Visualization Vignette](https://satijalab.org/seurat/articles/visualization_vignette.html).
+
+```{r}
+# Ridge plots - from ggridges. Visualize single cell expression distributions in each cluster
+RidgePlot(combined.data, features = c('CD3E', 'CD19'), ncol=2)
+
+
+# Violin plot - Visualize single cell expression distributions in each cluster
+VlnPlot(combined.data, features = c('CD3E', 'CD19'))
+        
+
+# Feature plot - visualize feature expression in low-dimensional space
+FeaturePlot(combined.data, features = c('CD3E', 'CD19'))
+
+
+# Dot plots - the size of the dot corresponds to the percentage of cells expressing the
+# feature in each cluster. The color represents the average expression level
+DotPlot(combined.data, features = c('CD3E', 'CD19')) + RotatedAxis()
+
+
+# Single cell heatmap of feature expression
+DoHeatmap(subset(combined.data, downsample = 100), features = c('CD3E', 'CD19'), size = 3)
+
+
+# Visualize co-expression of two features simultaneously
+FeaturePlot(combined.data, features = c("MS4A1", "CD79A"), blend = TRUE)
+
+
+# Split visualization to view expression by groups (replaces FeatureHeatmap)
+# You can split by seurat_clusters, Sample_Tag, or any other metadata you have.
+FeaturePlot(combined.data, features = c("MS4A1", "CD79A"), split.by = "groups")
+
+
+# Violin plots can also be split on some variable. Simply add the splitting variable to object
+# metadata and pass it to the split.by argument
+VlnPlot(combined.data, features = "nFeature", split.by = "groups")
+
+
+# Compare two features at once
+FeatureScatter(combined.data, feature1 = "CD3E", feature2 = "CD19")
+```
+
+

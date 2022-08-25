@@ -1,0 +1,156 @@
+---
+title: "Using Seurat with BD Rhapsody multi-omic single-cell data"
+output:
+  html_document:
+    df_print: paged
+    #code_fold: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+```
+```{r load-packages, warning=FALSE, results='hide'}
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+```
+
+
+## Load Rhapsody data in R
+
+Load the RDS object create in the create_seurat_object_abseq.R script.
+
+```{r}
+combined.data <- readRDS('projectname_abseq_seurat.rds')
+```
+
+
+## Quality control and selecting cells for further analysis
+
+This follows the [Guided Clustering Tutorial](https://satijalab.org/seurat/articles/pbmc3k_tutorial.html).
+
+Quality control steps are often performed in order to filter out low quality cells. In this example, we remove cells with:  
+
+1. High mitochondrial counts
+2. Abnormally high or low number of distinct expressed bioproducts (mRNA/AbSeq)
+
+For Rhapsody data, high mitochondrial counts do not directly correlate to dying cells, and so the threshold for filtering
+by mitochondrial counts may be higher than in the Seurat tutorial.
+
+These filtering criteria are determined through the QC steps shown below:
+
+```{r eval = TRUE, warning=FALSE, fig.width = 12, fig.height = 6}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+# Note that other species references may use the pattern "^Mt. or "^mt."
+combined.data[["percent.mt"]] <- PercentageFeatureSet(combined.data, pattern = "^MT.")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(combined.data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+nFeature_RNA is the number of distinct bioproducts detected a cell  
+nCount_RNA is the total number of molecules detected within a cell 
+
+From the violin plot above, we can determine the filtering criteria of:
+
+1. Remove cells with >20% mitochondria content;
+2. Remove cells with <200 or >4000 bioproducts  (mRNA/AbSeq)
+
+
+Use the command below to filter the Seurat Object:
+
+```{r eval = TRUE, warning=FALSE}
+combined.data <- subset(combined.data, subset = percent.mt < 20 & nFeature_RNA > 200 & nFeature_RNA < 4000)
+```
+
+## Normalizing the data
+
+The Seurat NormalizeData default settings normalize the expression of each bioproduct by the total expression, multiply by a scale factor (10,000), and log transforms the result:
+
+```{r eval = TRUE, warning=FALSE}
+combined.data = NormalizeData(combined.data)
+```
+
+# Identification of highly variable features (feature selection)
+
+Next, find a set of bioproducts that are highly variable between cells; the `nfeatures` parameter in the command indicates that it will return the 2000 most variable bioproducts.
+
+```{r eval = TRUE, warning=FALSE, fig.width = 12, fig.height = 6}
+combined.data <- FindVariableFeatures(combined.data, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10variable <- head(VariableFeatures(combined.data), 10)
+
+# plot variable features with labels
+variableFeaturePlot <- VariableFeaturePlot(combined.data)
+variableFeaturePlotWithLabels <- LabelPoints(plot = variableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+variableFeaturePlotWithLabels
+```
+
+## Scaling the data
+
+Next, a linear transformation, or scaling, will be performed on the data. This step is required for the next PCA step:
+
+```{r eval = TRUE, warning=FALSE, results='hide', message=FALSE}
+all.genes <- rownames(combined.data)
+combined.data = ScaleData(combined.data, features = all.genes, model.use = "linear")
+```
+
+## Perform linear dimensional reduction
+
+Following the scaling, a linear dimensional reduction will be performed on the data; we will use the variable features calculated by the previous step here in the `features` parameter.
+
+```{r eval = TRUE, warning=FALSE, results='hide', message=FALSE}
+combined.data = RunPCA(combined.data, features = VariableFeatures(object=combined.data), verbose = F)
+
+# Examine and visualize PCA results a few different ways
+print(combined.data[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(combined.data, dims = 1:2, reduction = "pca")
+DimPlot(combined.data, reduction = "pca")
+DimHeatmap(combined.data, dims = 1, cells = 500, balanced = TRUE)
+```
+
+## Determine the 'dimensionality' of the dataset
+
+To overcome the extensive technical noise in any single feature for scRNA-seq data, Seurat clusters cells based on their PCA scores, with each PC essentially representing a ‘metafeature’ that combines information across a correlated feature set. The top principal components therefore represent a robust compression of the dataset. However, how many components should we choose to include? 10? 20? 100?
+
+```{r}
+ElbowPlot(combined.data, ndims=40)
+```
+
+## Cluster the cells
+
+More details about these steps can be found in the Seurat Guided Clustering Tutorial.
+
+```{r}
+# We set the dims to 15 here based on the JackStraw and ElbowPlot data in the previous step
+combined.data <- FindNeighbors(combined.data, dims = 1:15)
+
+combined.data <- FindClusters(combined.data, resolution = 0.5)
+```
+
+## Run non-linear dimensional reduction (UMAP/tSNE)
+
+Seurat offers several non-linear dimensional reduction techniques, such as tSNE and UMAP, to visualize and explore these datasets. As input to the UMAP and tSNE, we suggest using the same PCs as input to the clustering analysis.
+
+```{r eval=TRUE}
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+combined.data <- RunUMAP(combined.data, dims = 1:15)
+
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+DimPlot(combined.data, reduction = "umap")
+```
+
+## Also normalize the AbSeq assay
+
+```{r}
+# Normalize ADT data
+# You can either switch the default assay to ADT or specify the assay in the NormalizeData parameters
+DefaultAssay(combined.data) <- "ADT"
+combined.data <- NormalizeData(combined.data, normalization.method = "CLR", margin = 2, assay = "ADT")
+
+```

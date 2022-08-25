@@ -1,0 +1,52 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Load Rhapsody data in R
+
+Load the seurat object created in the seurat_cluster_rna.Rmd script (or seurat_cluster_abseq.Rmd). The data have been QC'ed, normalized, scaled, and clustered.
+
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=60), cache=TRUE}
+combined.data <- readRDS('projectname_rna_cluster.rds')
+# or projectname_abseq_cluster.rds
+
+```
+
+## This follows the [Multimodal Reference Mapping Tutorial.](https://satijalab.org/seurat/articles/multimodal_reference_mapping.html)
+
+
+```{r}
+###Load and compare our dataset to reference dataset 
+
+library(SeuratDisk)
+
+reference <- LoadH5Seurat("pbmc_multimodal.h5seurat")
+combined.SCT<-SCTransform(combined.data,verbose=FALSE)
+anchors <- FindTransferAnchors(reference = reference,
+                               query = combined.SCT, 
+                               normalization.method = "SCT",
+                               reference.reduction = "spca",
+                               dims = 1:50,
+                               )
+```
+
+```{r}
+###Map reference to query
+combined_guided <- MapQuery(anchorset = anchors,
+                            query = combined.data,
+                            reference = reference,
+                            refdata = list(
+                              celltype.l1 = "celltype.l1",
+                              celltype.l2 = "celltype.l2",
+                              predicted_ADT = "ADT"
+                              ),
+                            reference.reduction = "spca", 
+                            reduction.model = "wnn.umap",
+                          
+)
+
+DimPlot(combined_guided, reduction = "umap", group.by = "predicted.celltype.l2", pt.size=1, cols='Paired', label = TRUE, label.size = 3 ,repel = TRUE) + ggtitle("WTA SCT")
+
+
+```

@@ -16,6 +16,11 @@ combined.data <- readRDS('projectname_rna_cluster.rds')
 ## This follows the [Multimodal Reference Mapping Tutorial.](https://satijalab.org/seurat/articles/multimodal_reference_mapping.html)
 wget https://atlas.fredhutch.org/data/nygc/multimodal/pbmc_multimodal.h5seurat
 
+if (!requireNamespace("remotes", quietly = TRUE)) {
+  install.packages("remotes")
+}
+remotes::install_github("mojaveazure/seurat-disk")
+
 ```{r}
 ###Load and compare our dataset to reference dataset 
 

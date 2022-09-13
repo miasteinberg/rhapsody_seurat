@@ -1,0 +1,51 @@
+# vim: ft=python
+
+workdir: os.environ['PWD']
+shell.executable('bash')
+
+
+# This script divides a final.bam from the Rhapsody pipeline into one bam for
+# each sample tag.
+
+
+BAM = 'project.final.bam'
+base = BAM.rsplit('.', 1)[0]
+
+tags = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', 'M', 'x']
+# M are multiplets, x are undetermined
+
+
+rule all:
+    input:
+        expand('subset_bams/%s.ST-{tag}.bam.bai' % base, tag=tags),
+        'subset_bams/%s.ST-none.bam' % BAM.rsplit('.', 1)[0]
+
+
+rule split_by_sample_tag:
+    input: BAM
+    output: 'subset_bams/%s.ST-{tag}.bam' % base
+    threads: 2
+    shell:
+        'samtools view -h -b -@ {threads} --tag ST:{wildcards.tag} {input} > {output}'
+
+
+rule reads_with_no_ST:
+    input: BAM
+    output: 'subset_bams/%s.ST-none.bam' % base
+    params: temp = 'ST-none.sam'
+    threads: 2
+    shell:
+        """
+        samtools view -h {input} | grep -v "ST:Z:" > {params.temp}
+        samtools view -h -b {params.temp} > {output}
+        samtools index {output}
+        rm -r {params.temp}
+        """
+
+rule index_bams:
+    input: 'subset_bams/%s.ST-{tag}.bam' % base
+    output: 'subset_bams/%s.ST-{tag}.bam.bai' % base
+    shell:
+        'samtools index {input}'
+
+

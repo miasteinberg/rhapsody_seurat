@@ -1,0 +1,57 @@
+housekeeping:
+    - "GAPDH"
+    - "SDHA"
+    - "HPRT1"
+    - "HBS1L"
+    - "AHSP"
+    - "B2M"
+    - "HNRNPL"
+
+
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7795632/
+apoptosis:
+    - "BCL2L1"
+    - "CASP9"
+    - "CHP2"
+    - "CYCS"
+    - "EXOG"
+    - "IL1A"
+    - "IL1R1"
+    - "IL1RAP"
+    - "IL3RA"
+    - "NFKBIA"
+    - "PIK3CA"
+    - "TNFRSF10A"
+    - "TNFRSF10B"
+    - "TNFRSF10D"
+    - "TNFRSF1A"
+
+
+# https://www.researchgate.net/figure/Transcriptomic-landscape-of-live-dead-and-dying-cells-a-FACS-analysis-showing-gating_fig3_336615634
+dying:
+    - "IFITM1"
+    - "IGKV1"
+    - "MZB1"
+    - "JCHAIN"
+    - "IGHG3"
+    - "ISG20"
+    - "UQCRHL"
+    - "XBP1"
+
+
+heatshock:
+    - "HSPH1"
+    - "SRSF2"
+    - "CACYBP"
+    - "RSRC2"
+    - "HSPA1B"
+    - "HSPB1"
+    - "SRSF7"
+    - "CDKN3"
+    - "HSF1"
+
+
+t_cell:
+    - 'CD3E'
+    - 'CD4'
+    - 'CD8A'

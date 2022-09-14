@@ -1,0 +1,561 @@
+---
+title: "dali"
+output: html_document
+author: Yujuan Gui, BD
+---
+
+```{r}
+library(tidyverse)
+library(DALI)
+library(Seurat)
+library(patchwork)
+
+# saveRDS(try, "~/OneDrive - BD/09_internal_project/vdj_secondary_analysis/dali/20220408_demo_for_dali.rds")
+
+# try <- readRDS("~/OneDrive - BD/09_internal_project/vdj_secondary_analysis/dali/20220408_demo_for_dali.rds")
+```
+
+# demo from DALI
+```{r}
+seuratObj <- readRDS("~/OneDrive - BD/09_internal_project/vdj_secondary_analysis/DALI_example_data/DALI_mouse_mLN_HDM/seuratObj.rds")
+
+bcr <- Read10X_vdj(seuratObj, "~/OneDrive - BD/09_internal_project/vdj_secondary_analysis/DALI_example_data/DALI_mouse_mLN_HDM/cellranger_VDJ/vdj_b/", assay = "BCR")
+
+# Interactive_VDJ(bcr)
+```
+
+```{r}
+# seuratObj@assays$RNA@counts %>% as.data.frame() -> rna_seurat
+# seuratObj@assays$HTO@counts %>% as.data.frame() -> hto_seurat
+# seuratObj@assays$SCT@counts %>% as.data.frame() -> sct_seurat
+
+# seuratObj@meta.data -> meta_seurat
+```
+
+```{r}
+bcr_meta <- bcr@meta.data
+
+# bcr_meta %>% colnames() %>% write.table(file = "~/OneDrive - BD/09_internal_project/vdj_secondary_analysis/dali/title.txt", quote = F, col.names = F, row.names = F)
+```
+
+# substitue DALI demo with bd demo fl vdj
+
+1. RNA: gene vs. barcode
+2. hto: hto vs. barcode => need to rewrite
+3. sct: gene vs. barcode
+4. meta: barcode vs. meta
+5. run pca, tsne, umap
+
+get B cells
+```{r}
+fl_vdj <- read_delim("~/OneDrive - BD/12_internal_data/demo/vdj_fl/RhapTCRBCRdemo_VDJ_perCell.csv", skip = 7, delim = ";") %>% 
+  filter(Cell_Type_Experimental == "B")
+
+fl_chain <- read_delim("~/OneDrive - BD/12_internal_data/demo/vdj_fl/RhapTCRBCRdemo_VDJ_Dominant_Contigs.csv", skip = 7, delim = ";")
+```
+
+clean AbSeq names
+```{r}
+path_expression <- "~/OneDrive - BD/12_internal_data/demo/vdj_fl/Combined_RhapTCRBCRdemo_DBEC_MolsPerCell.csv"
+
+inputCSV <- data.table::fread(path_expression, header = TRUE, skip = 7) 
+
+paramNames <- colnames(inputCSV) #get column names
+
+prettyParNames <- gsub("_*", "", paramNames) #remove underscores
+
+putBackUnderscore <- gsub("CellIndex", "Cell_Index", prettyParNames)  #Put the _ back in Cell_Index (Column 1 Header)
+
+prettyParNames2 <- gsub("\\:.*", "(ab)", putBackUnderscore) #replace all text after and including : (down slash) characters with nothing
+
+prettyParNames3 <- gsub("\\|.*", "(ab)", prettyParNames2) #replace all text after and including | (down slash) characters with nothing
+
+prettyParNames4 <- gsub("\\-", ".", prettyParNames3)
+
+prettyParNames4[23] <- "CD3.SK7(ab)"
+prettyParNames4[24] <- "CD3.UCHT1(ab)"
+prettyParNames4[31] <- "CD8.RPA(ab)"
+prettyParNames4[32] <- "CD8.SK1(ab)"
+
+colnames(inputCSV) <- prettyParNames4 # write the prettyParNames to column headers
+```
+
+transpose
+```{r}
+set.seed(1)
+inputCSV <- slice_sample(inputCSV, n = 2000) %>% 
+  pivot_longer(-Cell_Index) %>% 
+  pivot_wider(names_from=Cell_Index)
+```
+
+rna
+```{r}
+rna <- inputCSV %>% 
+  filter(!grepl("(ab)", name))
+
+gene_name <- rna$name
+
+rna <- rna %>% 
+  dplyr::select(-name) %>% 
+  `rownames<-`(gene_name)
+
+#sct
+sct <- rna
+```
+
+```{r}
+#smk
+smk <- read_csv("~/OneDrive - BD/12_internal_data/demo/vdj_fl/RhapTCRBCRdemo_Sample_Tag_Calls.csv", skip = 7) %>% 
+  filter(Cell_Index %in% colnames(sct)) %>% 
+  mutate(Sample_Tag = str_split(Sample_Tag, "_") %>% lapply(., "[", 1) %>% as.character,
+         Sample_Name = str_split(Sample_Name, "_") %>% lapply(., "[", 1) %>% as.character)
+
+smk <- filter(smk, Cell_Index %in% colnames(rna))
+
+smk <- smk %>% 
+  pivot_longer(-Cell_Index) %>% 
+  pivot_wider(names_from=Cell_Index, values_from=value)
+
+smk_name <- smk$name
+
+smk <- smk %>% 
+  dplyr::select(-name) %>% 
+  `rownames<-`(smk_name)
+
+rownames(smk) <- c("feature1", "feature2")
+```
+
+
+```{r}
+fl <- CreateSeuratObject(counts = rna, project = "bd_demo_fl", min.cells = 1, min.features = 1)
+
+fl[["SCT"]] <- CreateAssayObject(counts = sct)
+
+fl[["HTO"]] <- CreateAssayObject(counts = smk)
+
+fl[["percent.mt"]] <- PercentageFeatureSet(fl, pattern = "^MT.")
+
+VlnPlot(fl, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r eval = TRUE, warning=FALSE}
+fl <- NormalizeData(fl)
+
+fl <- FindVariableFeatures(fl, selection.method = "vst", nfeatures = 2000)
+
+top10variable <- head(VariableFeatures(fl), 10)
+
+variableFeaturePlot <- VariableFeaturePlot(fl)
+variableFeaturePlotWithLabels <- LabelPoints(plot = variableFeaturePlot, points = top10variable, repel = TRUE, xnudge = 0, ynudge = 0)
+variableFeaturePlotWithLabels
+```
+
+```{r}
+fl <- ScaleData(fl, model.use = "linear")
+
+fl <- RunPCA(fl, features = VariableFeatures(object=fl), verbose = F)
+
+# ElbowPlot(fl)
+
+fl <- RunTSNE(object = fl, tsne.method = "Rtsne", dims = 1:10)
+
+fl <- FindNeighbors(fl, dims = 1:10)
+fl <- FindClusters(fl, resolution = 0.2)
+
+fl <- RunUMAP(fl, dims = 1:10)
+
+DimPlot(fl, reduction = "umap")
+```
+
+- anchor based on Seurat hs pbmc
+-- construct pbmc
+```{r}
+pbmc.data <- Read10X(data.dir = "~/OneDrive - BD/17_collection_public/02_seurat/seurat_pbmc_3000/hg19/")
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+pbmc <- RunUMAP(pbmc, dims = 1:10)
+new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono",
+    "NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc)
+pbmc <- RenameIdents(pbmc, new.cluster.ids)
+
+pbmc.anchors <- FindTransferAnchors(reference = pbmc, query = fl, reference.reduction = "pca")
+predictions <- TransferData(anchorset = pbmc.anchors, refdata = pbmc@active.ident)
+fl <- AddMetaData(fl, metadata = predictions)
+Idents(object = fl) <- fl$predicted.id
+```
+
+add metadata into fl seurat object
+```{r}
+meta_fl <- fl@meta.data
+meta_fl <- meta_fl %>% 
+  mutate(nCount_ADT = nCount_RNA,
+         nCount_HTO = 1,
+         nFeature_HTO = 1, 
+         subsample = `orig.ident`,
+         DFPrediction = smk[1,] %>% as.character()) %>% 
+  dplyr::select(-c(RNA_snn_res.0.2, percent.mt))
+```
+
+## configure bcr
+
+Compare seuratObj and bcr, the assays are the same. => Suspect the difference is mainly in meta
+read in bd demo vdj data
+start from fl_vdj, get the cells, chop the data only having bcr, map the chain names from fl_chain
+```{r}
+# wrangle
+ss_vdj <- filter(fl_vdj, Cell_Index %in% colnames(fl)) %>% 
+  dplyr::select(Cell_Index:BCR_Light_Read_Count) %>% 
+  dplyr::select(-c(Total_VDJ_Read_Count, Total_VDJ_Molecule_Count))
+
+ss_vdj <- left_join(ss_vdj, matrix(nrow = 898, ncol = 45) %>% 
+            as_tibble() %>% 
+            `colnames<-`(c("Cell_Index", colnames(bcr_meta)[12:56])) %>% 
+            mutate(Cell_Index = ss_vdj$Cell_Index), 
+          by = "Cell_Index") 
+
+# write.csv(colnames(bcr_meta), file = "~/OneDrive - BD/09_internal_project/vdj_secondary_analysis/dali/dali_bcr_meta.csv", quote = F)
+```
+
+map the info in fl_chain and fl_vdj to ss_vdj
+```{r}
+fl_vdj <- fl_vdj %>% filter(Cell_Index %in% colnames(rna))
+
+ss_vdj$vj.v_gene <- fl_vdj$BCR_Light_V_gene_Dominant
+ss_vdj$vj.d_gene <- NA
+ss_vdj$vj.j_gene <- fl_vdj$BCR_Light_J_gene_Dominant
+ss_vdj$vj.c_gene <- fl_vdj$BCR_Light_C_gene_Dominant
+ss_vdj$vj.cdr3 <- fl_vdj$BCR_Light_CDR3_Translation_Dominant
+ss_vdj$vj.cdr3_nt <- fl_vdj$BCR_Light_CDR3_Nucleotide_Dominant
+ss_vdj$vj.reads <- fl_vdj$BCR_Light_Read_Count
+ss_vdj$vj.umis <- fl_vdj$BCR_Light_Molecule_Count
+ss_vdj$vj.v_fam <- fl_vdj$BCR_Light_V_gene_Dominant
+ss_vdj$vdj.cdr3 <- fl_vdj$BCR_Heavy_CDR3_Translation_Dominant
+ss_vdj$vdj.cdr3_nt <- fl_vdj$BCR_Heavy_CDR3_Nucleotide_Dominant
+ss_vdj$vdj.reads <- fl_vdj$BCR_Heavy_Read_Count
+ss_vdj$vdj.umis <- fl_vdj$BCR_Heavy_Molecule_Count
+ss_vdj$vdj.v_fam <- fl_vdj$BCR_Heavy_V_gene_Dominant
+ss_vdj$vj.dual_IR <- fl_vdj$BCR_Paired_Chains
+ss_vdj$vdj.dual_IR <- fl_vdj$BCR_Paired_Chains
+```
+
+```{r}
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.fwr1 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR1_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.fwr1 = as.character(vj.fwr1))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.fwr1_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR1_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.fwr1_nt = as.character(vj.fwr1_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.cdr1 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$CDR1_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.cdr1 = as.character(vj.cdr1))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.cdr1_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$CDR1_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.cdr1_nt = as.character(vj.cdr1_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.fwr2 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR2_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.fwr2 = as.character(vj.fwr2))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.fwr2_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR2_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.fwr2_nt = as.character(vj.fwr2_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.cdr2 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$CDR2_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.cdr2 = as.character(vj.cdr2))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.cdr2_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$CDR2_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.cdr2_nt = as.character(vj.cdr2_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.fwr3 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR3_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.fwr3 = as.character(vj.fwr3))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.fwr3_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR3_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.fwr3_nt = as.character(vj.fwr3_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.fwr4 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR4_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.fwr4 = as.character(vj.fwr4))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vj.fwr4_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Light_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR4_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vj.fwr4_nt = as.character(vj.fwr4_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.v_gene = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$V_gene_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.v_gene = as.character(vdj.v_gene))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.d_gene = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$D_gene_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.d_gene = as.character(vdj.d_gene))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.j_gene = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$J_gene_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.j_gene = as.character(vdj.j_gene))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.c_gene = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$C_gene_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.c_gene = as.character(vdj.c_gene))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.c_gene = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$C_gene_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.c_gene = as.character(vdj.c_gene))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.fwr1 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR1_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.fwr1 = as.character(vdj.fwr1))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.fwr1_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR1_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.fwr1_nt = as.character(vdj.fwr1_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.cdr1 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$CDR1_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.cdr1 = as.character(vdj.cdr1))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.cdr1_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$CDR1_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.cdr1_nt = as.character(vdj.cdr1_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.fwr2 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR2_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.fwr2 = as.character(vdj.fwr2))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.fwr2_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR2_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.fwr2_nt = as.character(vdj.fwr2_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.cdr2 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$CDR2_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.cdr2 = as.character(vdj.cdr2))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.cdr2_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$CDR2_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.cdr2_nt = as.character(vdj.cdr2_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.fwr3 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR3_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.fwr3 = as.character(vdj.fwr3))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.fwr3_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR3_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.fwr3_nt = as.character(vdj.fwr3_nt))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.fwr4 = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR4_Translation_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.fwr4 = as.character(vdj.fwr4))
+
+ss_vdj <- ss_vdj %>% 
+  mutate(vdj.fwr4_nt = pmap(dplyr::select(ss_vdj, Cell_Index, BCR_Heavy_V_gene_Dominant),
+    ~ filter(fl_chain, Cell_Index == .x, V_gene_Dominant == .y) %>% 
+      .$FR4_Nucleotide_Dominant %>% unlist)
+    ) %>% 
+  mutate(vdj.fwr4_nt = as.character(vdj.fwr4_nt))
+
+ss_vdj <- map_df(ss_vdj, ~ gsub("character\\(0\\)", NA, .x))
+```
+
+calculate clonotype
+```{r}
+ss_vdj %>% 
+  dplyr::select(Cell_Index, vdj.cdr1_nt, vdj.cdr2_nt, vdj.cdr3_nt) %>% 
+  filter(!is.na(vdj.cdr1_nt)) %>% 
+  mutate(bind = paste(vdj.cdr1_nt, vdj.cdr2_nt, vdj.cdr3_nt, sep = "")) %>% 
+  group_by(bind) %>% 
+  dplyr::summarise(len = length(bind)) %>% 
+  mutate(clonotype = paste("clonotype", 1:dim(.)[1], sep = "")) -> db
+
+ss_vdj %>% 
+  dplyr::select(Cell_Index, clonotype, vdj.cdr1_nt, vdj.cdr2_nt, vdj.cdr3_nt) %>% 
+  mutate(bind = paste(vdj.cdr1_nt, vdj.cdr2_nt, vdj.cdr3_nt, sep = "")) %>% 
+  dplyr::select(-clonotype)-> intermediate
+
+left_join(intermediate, db, by = "bind") %>% 
+  dplyr::select(Cell_Index, clonotype) %>% 
+  filter(!is.na(clonotype))-> clonotype
+```
+
+```{r}
+ss_vdj <- ss_vdj %>% 
+  dplyr::select(-clonotype) %>% 
+  left_join(clonotype, by = "Cell_Index")
+
+db <- fl@meta.data %>% 
+  rownames_to_column("Cell_Index") %>% 
+  mutate(DFPrediction = "singlet") %>% 
+  left_join(dplyr::select(ss_vdj, Cell_Index, vj.v_gene:clonotype), by = "Cell_Index")
+
+meta_name <- db$Cell_Index
+
+fl@meta.data <- db %>% 
+  dplyr::select(-Cell_Index)
+
+rownames(fl@meta.data) <- meta_name
+```
+
+construct b_contig_annot
+```{r}
+b_contig_annot <- read_delim("~/OneDrive - BD/09_internal_project/vdj_secondary_analysis/DALI_example_data/DALI_mouse_mLN_HDM/cellranger_VDJ/vdj_b/filtered_contig_annotations.csv", delim = ",")
+
+df <- fl_chain %>% 
+  filter(Cell_Index %in% ss_vdj$Cell_Index, !grepl(pattern = "TCR*", Chain_Type))
+
+df_annot <- matrix(NA, nrow = nrow(df), ncol = ncol(b_contig_annot)) %>% 
+  as_tibble() %>% 
+  `colnames<-`(colnames(b_contig_annot))
+
+df_annot$barcode <- df$Cell_Index
+df_annot$is_cell <- TRUE
+df_annot$contig_id <- df$Contig_ID
+df_annot$high_confidence <- TRUE
+df_annot$length <- df$Full_Contig_Nucleotide_Trimmed_Length
+df_annot$chain <- str_split(df$Contig_ID, "_") %>% lapply(., "[", 2) %>% unlist
+df_annot$v_gene <- df$V_gene_Dominant
+df_annot$d_gene <- df$D_gene_Dominant
+df_annot$j_gene <- df$J_gene_Dominant
+df_annot$c_gene <- df$C_gene_Dominant
+df_annot$full_length <- df$Full_Length
+df_annot$productive <- df$Productive
+df_annot$fwr1 <- df$FR1_Translation_Dominant
+df_annot$fwr1_nt <- df$FR1_Nucleotide_Dominant
+df_annot$cdr1 <- df$CDR1_Translation_Dominant
+df_annot$cdr1_nt <- df$CDR1_Nucleotide_Dominant
+df_annot$fwr2 <- df$FR2_Translation_Dominant
+df_annot$fwr2_nt <- df$FR2_Nucleotide_Dominant
+df_annot$cdr2 <- df$CDR2_Translation_Dominant
+df_annot$cdr2_nt <- df$CDR2_Nucleotide_Dominant
+df_annot$fwr3 <- df$FR3_Translation_Dominant
+df_annot$fwr3_nt <- df$FR3_Nucleotide_Dominant
+df_annot$cdr3 <- df$CDR3_Translation_Dominant
+df_annot$cdr3_nt <- df$CDR3_Nucleotide_Dominant
+df_annot$fwr4 <- df$FR4_Translation_Dominant
+df_annot$fwr4_nt <- df$FR4_Nucleotide_Dominant
+df_annot$reads <- df$Read_Count
+df_annot$umis <- df$Molecule_Count
+
+for (i in df_annot$barcode){
+  r <- which(df_annot$barcode %in% i, arr.ind = T)
+  df_annot[r, 29] <- ss_vdj[which(ss_vdj$Cell_Index==i), 24]
+}
+
+df_annot %>% 
+  mutate(barcode = as.character(barcode)) %>% 
+  left_join(clonotype, by = c("barcode" = "Cell_Index")) -> try
+
+try$exact_subclonotype_id <- try$raw_clonotype_id
+
+write_csv(try, "~/OneDrive - BD/09_internal_project/vdj_secondary_analysis/dali/filtered_contig_annotations.csv")
+```
+
+```{r}
+try <- Read10X_vdj(fl, "~/OneDrive - BD/09_internal_project/vdj_secondary_analysis/dali/", assay = "BCR")
+
+tmp <- fl@meta.data %>% rownames_to_column("barcode") %>% dplyr::select(barcode, clonotype)
+tmp2 <- try@misc$VDJ$BCR$vdj.primary %>% dplyr::select(barcode)
+tmp3 <- left_join(tmp2, tmp, by = "barcode")
+try@misc$VDJ$BCR$vdj.primary$clonotype <- tmp3$clonotype
+
+Interactive_VDJ(try)
+```
+
+

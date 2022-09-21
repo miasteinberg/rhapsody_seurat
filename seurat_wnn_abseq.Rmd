@@ -1,0 +1,172 @@
+---
+title: "Using Seurat with BD Rhapsody multi-omic single-cell data"
+output:
+  html_document:
+    df_print: paged
+    #code_fold: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+
+```{r load-packages, warning=FALSE, results='hide'}
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+```
+
+
+## Load Rhapsody data in R
+
+Load the RDS object create in the create_seurat_object_abseq.R script.
+
+```{r}
+combined.data <- readRDS('jasper_abseq_seurat.rds')
+```
+
+
+## Quality control and selecting cells for further analysis
+
+This follows the [Guided Clustering Tutorial](https://satijalab.org/seurat/articles/pbmc3k_tutorial.html) for QC and normalization
+and the [Weighted Nearest Neighbor Analysis](https://satijalab.org/seurat/articles/weighted_nearest_neighbor_analysis.html) for clustering.
+
+Quality control steps are often performed in order to filter out low quality cells. In this example, we remove cells with:  
+
+1. High mitochondrial counts
+2. Abnormally high or low number of distinct expressed bioproducts (mRNA/AbSeq)
+
+For Rhapsody data, high mitochondrial counts do not directly correlate to dying cells, and so the threshold for filtering
+by mitochondrial counts may be higher than in the Seurat tutorial.
+
+These filtering criteria are determined through the QC steps shown below:
+
+```{r eval = TRUE, warning=FALSE, fig.width = 12, fig.height = 6}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+# Note that other species references may use the pattern "^Mt. or "^mt."
+combined.data[["percent.mt"]] <- PercentageFeatureSet(combined.data, pattern = "^MT.")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(combined.data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+nFeature_RNA is the number of distinct bioproducts detected a cell  
+nCount_RNA is the total number of molecules detected within a cell 
+
+From the violin plot above, we can determine the filtering criteria of:
+
+1. Remove cells with >20% mitochondria content;
+2. Remove cells with <200 or >4000 bioproducts  (mRNA/AbSeq)
+
+
+Use the command below to filter the Seurat Object:
+
+```{r eval = TRUE, warning=FALSE}
+combined.data <- subset(combined.data, subset = percent.mt < 20 & nFeature_RNA > 200 & nFeature_RNA < 4000)
+```
+
+
+## Normalizing the data
+
+The Seurat NormalizeData default settings normalize the expression of each bioproduct by the total expression, multiply by a scale factor (10,000), and log transforms the result:
+
+```{r eval = TRUE, warning=FALSE}
+combined.data = NormalizeData(combined.data)
+```
+
+# Identification of highly variable features (feature selection)
+
+Next, find a set of bioproducts that are highly variable between cells; the `nfeatures` parameter in the command indicates that it will return the 2000 most variable bioproducts.
+
+```{r eval = TRUE, warning=FALSE, fig.width = 12, fig.height = 6}
+combined.data <- FindVariableFeatures(combined.data)
+
+```
+
+## Scaling the data
+
+Next, a linear transformation, or scaling, will be performed on the data. This step is required for the next PCA step:
+
+```{r eval = TRUE, warning=FALSE, results='hide', message=FALSE}
+all.genes <- rownames(combined.data)
+combined.data = ScaleData(combined.data, features = all.genes, model.use = "linear")
+```
+
+## Perform linear dimensional reduction
+
+Following the scaling, a linear dimensional reduction will be performed on the data; we will use the variable features calculated by the previous step here in the `features` parameter.
+
+```{r eval = TRUE, warning=FALSE, results='hide', message=FALSE}
+combined.data = RunPCA(combined.data, features = VariableFeatures(object=combined.data), verbose = F)
+
+```
+
+# Check dimensionality of the data
+
+```{r}
+ElbowPlot(combined.data, ndims=40)
+```
+
+
+Switch over to AbSeqs
+
+```{r}
+DefaultAssay(combined.data) <- 'ADT'
+
+VariableFeatures(combined.data) <- rownames(combined.data[["ADT"]])
+combined.data <- NormalizeData(combined.data, normalization.method = 'CLR', margin = 2)
+combined.data <- ScaleData(combined.data)
+combined.data <- RunPCA(combined.data, reduction.name='apca')
+
+ElbowPlot(combined.data, ndims=40)
+```
+
+Here the workflow uses both the RNA and AbSeq data for clustering. 
+
+```{r}
+# Identify multimodal neighbors. These will be stored in the neighbors slot, 
+# and can be accessed using combined.data[['weighted.nn']]
+# The WNN graph can be accessed at combined.data[["wknn"]], 
+# and the SNN graph used for clustering at combined.data[["wsnn"]]
+# Cell-specific modality weights can be accessed at combined.data$RNA.weight
+combined.data <- FindMultiModalNeighbors(
+  combined.data, reduction.list = list("pca", "apca"), 
+  dims.list = list(1:30, 1:18), modality.weight.name = "RNA.weight")
+
+combined.data <- RunUMAP(combined.data, nn.name = "weighted.nn", reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+combined.data <- FindClusters(combined.data, graph.name = "wsnn", algorithm = 3, resolution = 2, verbose = FALSE)
+```
+
+UMAPs based on WNN.
+
+```{r}
+DimPlot(combined.data, reduction = 'wnn.umap', label = TRUE, repel = TRUE, label.size = 2.5) + ggtitle('Multimodal Clusters')
+DimPlot(combined.data, reduction = 'wnn.umap', group.by = 'sample_name') + ggtitle('Multimodal Clusters')
+
+```
+
+
+Also take a look at the RNA and AbSeq UMAPs separately.
+
+```{r}
+combined.data <- RunUMAP(combined.data, reduction = 'pca', dims = 1:30, assay = 'RNA', 
+              reduction.name = 'rna.umap', reduction.key = 'rnaUMAP_')
+combined.data <- RunUMAP(combined.data, reduction = 'apca', dims = 1:18, assay = 'ADT', 
+              reduction.name = 'adt.umap', reduction.key = 'adtUMAP_')
+
+DimPlot(combined.data, reduction = 'rna.umap', group.by = 'sample_name') + ggtitle('RNA UMAP')
+DimPlot(combined.data, reduction = 'adt.umap', group.by = 'sample_name') + ggtitle('AbSeq UMAP')
+
+```
+
+
+```{r}
+FeaturePlot(combined.data, features = c("CD46.CD46.AHS0071.pAbO","CD34.8G12.CD34.AHS0182.pAbO"),
+                  reduction = 'wnn.umap', max.cutoff = 2)
+
+VlnPlot(combined.data, features = c("rna_CD3E","rna_CD8A"))
+
+FeatureScatter(combined.data, feature1='CD34.8G12.CD34.AHS0182.pAbO', feature2='CD38.HIT2.CD38.AHS0022.pAbO', group.by = 'sample_name')
+
+```

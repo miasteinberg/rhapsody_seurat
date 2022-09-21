@@ -1,0 +1,105 @@
+---
+title: "Using Seurat with BD Rhapsody multi-omic single-cell data"
+output:
+  html_document:
+    df_print: paged
+    #code_fold: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+
+```{r load-packages, warning=FALSE, results='hide'}
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+```
+
+
+## Load Rhapsody data in R
+
+Load the RDS object create in the create_seurat_object_abseq.R script.
+
+```{r}
+norm.data <- readRDS('project_abseq_seurat.rds')
+sct.data <- readRDS('project_abseq_seurat.rds')
+```
+
+
+## Quality control and selecting cells for further analysis
+
+```{r eval = TRUE, warning=FALSE, fig.width = 12, fig.height = 6}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+# Note that other species references may use the pattern "^Mt. or "^mt."
+norm.data[["percent.mt"]] <- PercentageFeatureSet(norm.data, pattern = "^MT.")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(norm.data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r eval = TRUE, warning=FALSE}
+norm.data <- subset(norm.data, subset = percent.mt < 20 & nFeature_RNA > 200 & nFeature_RNA < 4000)
+
+
+norm.data = NormalizeData(norm.data)
+norm.data <- FindVariableFeatures(norm.data, selection.method = "vst", nfeatures = 2000)
+
+all.genes <- rownames(norm.data)
+norm.data = ScaleData(norm.data, features = all.genes, model.use = "linear")
+
+norm.data = RunPCA(norm.data, features = VariableFeatures(object=norm.data), verbose = F)
+
+ElbowPlot(norm.data, ndims=40)
+
+norm.data <- RunUMAP(norm.data, dims = 1:30, verbose = FALSE)
+
+norm.data <- FindNeighbors(norm.data, dims = 1:30, verbose = FALSE)
+norm.data <- FindClusters(norm.data, verbose = FALSE)
+```
+
+### Apply sctransform normalization
+
+Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
+Transformed data will be available in the SCT assay, which is set as the default after running sctransform
+During normalization, we can also remove confounding sources of variation, for example, mitochondrial mapping percentage
+
+```{r}
+sct.data[["percent.mt"]] <- PercentageFeatureSet(sct.data, pattern = "^MT.")
+
+# run sctransform
+sct.data <- SCTransform(sct.data, vars.to.regress = "percent.mt", verbose = FALSE)
+
+```
+
+The latest version of sctransform also supports using glmGamPoi package which substantially improves the speed of the learning procedure. It can be invoked by specifying method="glmGamPoi".
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+
+BiocManager::install("glmGamPoi")
+
+sct.data <- SCTransform(sct.data, method = "glmGamPoi", vars.to.regress = "percent.mt", verbose = FALSE)
+
+
+```{r}
+# These are now standard steps in the Seurat workflow for visualization and clustering
+sct.data <- RunPCA(sct.data, verbose = FALSE)
+ElbowPlot(sct.data, ndims=40)
+
+```
+```{r}
+sct.data <- RunUMAP(sct.data, dims = 1:30, verbose = FALSE)
+
+sct.data <- FindNeighbors(sct.data, dims = 1:30, verbose = FALSE)
+sct.data <- FindClusters(sct.data, verbose = FALSE)
+```
+
+Compare the normalized UMAP to the SCT UMAP.
+
+```{r}
+DimPlot(norm.data, label = TRUE)
+DimPlot(sct.data, label = TRUE)
+
+```
+

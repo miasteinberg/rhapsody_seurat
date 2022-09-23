@@ -1,0 +1,70 @@
+---
+title: "Misc Tasks"
+author: "Mia Steinberg"
+date: "9/21/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Renaming sample tags (if you didn't merge the names into the SMK table earlier).
+
+```{r}
+# rename Idents for sample names, combining tag03 and tag04.
+Idents(combined.data) <- 'Sample_Tag'
+
+combined.data <- RenameIdents(object=combined.data, 'SampleTag01_hs' = 'control', 'SampleTag03_hs' = 'treat1', 'SampleTag04_hs' = 'treat2', 
+                              'SampleTag05_hs' = 'treat3', 'SampleTag06_hs' = 'treat4' )
+
+combined.data[['sample_name']] <- Idents(combined.data)
+
+Idents(combined.data) <- 'sample_name'
+
+```
+
+[Clustree](https://cran.r-project.org/web/packages/clustree/vignettes/clustree.html) to compare clustering resoltuion.
+
+```{r}
+library(clustree)
+
+DefaultAssay(combined.data) <- "RNA"
+
+# Select a range of resolutions
+resolution.range <- seq(from = 0.4, to = 2.0, by = 0.4)
+
+# Find clusters using a range of resolutions
+combined.data <- Seurat::FindClusters(object = combined.data, resolution = resolution.range)
+
+# run clustree
+tree <- clustree(combined.data)
+tree
+
+```
+
+Check for [cell cycle heterogeneity](https://satijalab.org/seurat/articles/cell_cycle_vignette.html).
+
+```{r}
+# A list of cell cycle markers, from Tirosh et al, 2015, is loaded with Seurat.  We can
+# segregate this list into markers of G2/M phase and markers of S phase
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+combined.data <- CellCycleScoring(combined.data, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+
+# view cell cycle scores and phase assignments
+head(combined.data[[]])
+
+# Visualize the distribution of cell cycle markers across
+RidgePlot(combined.data, features = c("PCNA", "TOP2A", "MCM6", "MKI67"), ncol = 2)
+
+# Running a PCA on cell cycle genes reveals, unsurprisingly, that cells separate entirely by
+# phase
+combined.data <- RunPCA(combined.data, features = c(s.genes, g2m.genes))
+DimPlot(combined.data)
+
+# If needed, regress out cell cycle scores during data scaling
+#combined.data <- ScaleData(combined.data, vars.to.regress = c("S.Score", "G2M.Score"), features = rownames(combined.data))
+
+```
